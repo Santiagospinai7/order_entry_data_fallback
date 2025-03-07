@@ -13,12 +13,15 @@ from orders.order_manager import OrderManager
 from requests.auth import HTTPBasicAuth
 from utils import pdf_actions
 
+from .grain_vision_fallback import GrainVisionFallback
+
 LOGGER = logging.getLogger("orders.grain.grain_order_entry")
 
 class GrainOrderEntry(Client):
     def __init__(self, db):
         super().__init__(db)
         self.customer_id = 'GRAMIA'
+        self.vision_fallback = GrainVisionFallback() 
 
     def test_logs(self):
         LOGGER.info('Testing logging from grain_order_entry.')
