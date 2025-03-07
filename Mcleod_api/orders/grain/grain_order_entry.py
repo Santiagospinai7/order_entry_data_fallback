@@ -23,6 +23,79 @@ class GrainOrderEntry(Client):
         self.customer_id = 'GRAMIA'
         self.vision_fallback = GrainVisionFallback() 
 
+    def _try_vision_fallback(self, elem, location_type):
+        """
+        Try to extract location information using Google Vision API as a fallback
+        
+        Args:
+            elem (dict): The order element
+            location_type (str): 'PU' or 'SO'
+            
+        Returns:
+            bool: True if location was successfully extracted, False otherwise
+        """
+        try:
+            LOGGER.info(f"Attempting Vision API fallback for {elem['bol']} - {location_type}")
+            
+            # Get the full path to the PDF file
+            pdf_path = f'{settings.GRAIN_ORDERS_PATH}\\{elem["origin_file"]}'
+            
+            # Extract location information using Vision API
+            location_info = self.vision_fallback.extract_location_from_pdf(pdf_path)
+            
+            if not location_info or not location_info.get(location_type):
+                LOGGER.error(f"Vision API failed to extract {location_type} location for {elem['bol']}")
+                return False
+                
+            # Extract the location information for the specified location type
+            loc_info = location_info.get(location_type, {})
+            
+            if not loc_info.get('address') or not loc_info.get('state'):
+                LOGGER.error(f"Vision API extracted incomplete {location_type} location for {elem['bol']}")
+                return False
+            
+            # Format the address
+            address_parts = []
+            if loc_info.get('address'):
+                address_parts.append(loc_info.get('address', ''))
+            if loc_info.get('city'):
+                address_parts.append(loc_info.get('city', ''))
+            if loc_info.get('state'):
+                address_parts.append(loc_info.get('state', ''))
+            if loc_info.get('zip_code'):
+                address_parts.append(loc_info.get('zip_code', ''))
+                
+            formatted_address = ' '.join(address_parts)
+            
+            # Update the element with the new address
+            if location_type == 'PU':
+                elem['PU_details'][0] = formatted_address
+            else:  # SO
+                elem['SO_details'][0] = formatted_address
+                
+            LOGGER.info(f"Successfully updated {location_type} address using Vision API: {formatted_address}")
+            
+            # Check if the address is in the predefined addresses
+            predefined_addresses = {
+                'US PL FORT WAYNE FORT WAYNE IN': 'EGIFIN',
+                'CUSTOMER PO: 434759 EAST POINT GA': 'BREEGA',
+                'CUSTOMER PO: 24016434 LAUREL MD': 'NESLMD',
+                '445 HURRICANE TRAIL DACULA GA': 'PUBDGA',
+                '1500 SUCKLE HWY PENNSAUKEN TOWNSHIP NJ': 'BARPNJ'
+            }
+            
+            if formatted_address in predefined_addresses and location_type == 'SO':
+                elem['SO_loc_code'] = predefined_addresses[formatted_address]
+                elem['SO_open'] = '0001'
+                elem['SO_close'] = '2359'
+                LOGGER.info(f"Found predefined location code for {formatted_address}: {predefined_addresses[formatted_address]}")
+                return True
+                
+            return True
+        except Exception as e:
+            LOGGER.error(f"Error in Vision API fallback for {elem['bol']} - {location_type}: {e}")
+            return False
+
     def test_logs(self):
         LOGGER.info('Testing logging from grain_order_entry.')
 
@@ -277,14 +350,34 @@ class GrainOrderEntry(Client):
                     try:
                         loc_code = self.db.execute_read_query(query[0])
 
-                        if len(loc_code) == 0:
-                            msg_error = f"Location code not found for {query[1]}: {elem[query[1] + '_details'][0]}"
-                            # self.failed_orders.append([elem['bol'], msg_error])
-                            self.failed_orders[elem['bol']].append(msg_error)
-                            elem['error'] = msg_error
+                        # if len(loc_code) == 0:
+                        #     msg_error = f"Location code not found for {query[1]}: {elem[query[1] + '_details'][0]}"
+                        #     # self.failed_orders.append([elem['bol'], msg_error])
+                        #     self.failed_orders[elem['bol']].append(msg_error)
+                        #     elem['error'] = msg_error
 
-                            print(msg_error)
-                            LOGGER.error(msg_error)
+                        #     print(msg_error)
+                        #     LOGGER.error(msg_error)
+                        if len(loc_code) == 0:
+                            # Try fallback with Google Vision API if location code not found
+                            location_found = self._try_vision_fallback(elem, query[1])
+                            if not location_found:
+                                msg_error = f"Location code not found for {query[1]}: {elem[query[1] + '_details'][0]}"
+                                # self.failed_orders.append([elem['bol'], msg_error])
+                                self.failed_orders[elem['bol']].append(msg_error)
+                                elem['error'] = msg_error
+                                print(msg_error)
+                                LOGGER.error(msg_error)
+                            else:
+                                # If we found the location using Vision API, re-run the location query
+                                if query[1] == 'PU':
+                                    pu_addr = elem['PU_details'][0].split(' ')
+                                    fallback_query = f"SELECT [id],[{pu_dow_open}],[{pu_dow_close}] FROM [{self.db.database_name}].[dbo].[location] WHERE is_active = 'Y' and address1 like '%{pu_addr[0]}%' AND state = '{pu_addr[-2]}' AND zip_code='{pu_addr[-1]}' "
+                                    loc_code = self.db.execute_read_query(fallback_query)
+                                else:  # SO
+                                    so_addr = elem['SO_details'][0].split(' ')
+                                    fallback_query = f"SELECT [id],[{so_dow_open}],[{so_dow_close}] FROM [{self.db.database_name}].[dbo].[location] WHERE is_active = 'Y' and address1 like '%{so_addr[0]}%' AND state = '{so_addr[-1]}' AND city_name like '%{so_addr[-2]}%' AND [address1] like '%{so_addr[1]}%' "
+                                    loc_code = self.db.execute_read_query(fallback_query)
 
                         print('loc_code query:', loc_code)
                     except Exception as e:
