@@ -8,11 +8,10 @@ import traceback
 import pdfplumber
 import requests
 from config import settings
-from requests.auth import HTTPBasicAuth
-from utils import pdf_actions
-
 from orders.client import Client
 from orders.order_manager import OrderManager
+from requests.auth import HTTPBasicAuth
+from utils import pdf_actions
 
 LOGGER = logging.getLogger("orders.grain.grain_order_entry")
 
@@ -32,27 +31,6 @@ class GrainOrderEntry(Client):
         for elem in elements:
             if elem.lower().endswith('.pdf'):
                 pdf_elem_count+=1
-
-                # try:
-                #     print('check if orders already exists')
-                #     print('elem', elem)
-                #     blnum = elem[:-4]  # Assuming elem is a string and you want to get the BOL number.
-                #     print('blnum', blnum)
-                #     query = f"SELECT id FROM [{self.db.database_name}].[dbo].[orders] WHERE [blnum] = :blnum"
-                #     params = {'blnum': blnum}
-                #     order_exists = self.db.execute_read_query(query, params)
-                #
-                #     # Check if the order already exists based on the query result
-                #     print('check order exist', order_exists)
-                #     if order_exists and order_exists[0]:  # Check if the list is non-empty and the first item has a value
-                #         print('Order already exists in the database:', blnum)
-                #         # self.existing_orders_in_api.append(blnum)
-                #         continue  # Skip processing this order since it already exists
-                #
-                # except Exception as e:
-                #     print(f"Error extracting orders pdf: {str(e)}")
-                #     LOGGER.error(f"Error extracting orders pdf: {str(e)}")
-                #     continue
                 
                 try:
                     print('add order to orders to process elem', elem)
@@ -83,7 +61,6 @@ class GrainOrderEntry(Client):
         return orders_to_process
 
     def validate_orders(self, orders):
-
         for order in orders:
             try:
                 print('elem', order)
